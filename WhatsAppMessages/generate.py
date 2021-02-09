@@ -5,63 +5,66 @@ import pandas as pd
 # Generate some fake data
 np.random.seed(42)
 
-# The total number of HSMs to test
-hsm_n = 3
-hsms = [f"hsm_template_{i+1}" for i in range(3)]
+# The total number of customers
+customers_n = 4
+customers = [f"customer_{i+1}" for i in range(customers_n)]
 
-# Total number of incoming messages
-in_messages_n = 10_000
-ids = np.linspace(1, in_messages_n, in_messages_n)
+messages = {}
 
-# Messages come at different times of the day and we'll model this with a Beta distribution
-# The support of the Beta distribution is [0, 1] and we use this to represent the fraction of the day
-# For example: 10 p.m. => 22/24 = 0.92
-ts_day = np.random.beta(7, 5, size=in_messages_n) * 24
+# We'll use the same timeframe for all customers
+weeks = 10
+days = np.linspace(1, weeks * 7, weeks * 7)
 
-# Now we can generate data about the hour of the day
-zero_rounder = lambda v: round(v, 0)
-zero_rounder = np.vectorize(zero_rounder)
-hour_of_day = zero_rounder(ts_day)
+# Iterate all the customers
+# We'll generate messages for customers one by one
+for customer in customers:
+    customer_messages = []
 
-# We can also extract the minutes of the day
-minute_of_day = zero_rounder(ts_day * 60)
+    # Iterate the number of weeks
+    for week in range(weeks):
 
-# We'll model these messages to be received during the course of a week
-# So we'll distribute them in five days
-total_days = 5
+        # Iterate days of the week
+        for day in range(7):
 
-# For the sake of simplicity let's distribute the day of the week uniformly
-day_of_week = np.random.randint(1, total_days + 1, size=in_messages_n)
+            # Starting number of messages
+            if len(customer_messages) == 0:
+                # Random starting number of messages between 10K and 50K
+                new_messages = np.random.randint(100, 1_000)
 
-# Create a sort of timestamp
-ts = ts_day + (day_of_week * 24)
+            # If it's not the first day of history
+            else:
+                # Randomly decide if the number of messages will increase or decrease
+                # We use a binomial to be able to be biased towards an increase/decrease
+                # Our bias will change depending on the day of the week
+                if day == 5 or day == 6:
+                    # Weekends will be more likely to decrease
+                    growth_decrease = np.random.binomial(1, 0.3)
+                else:
+                    # Weekdays will be more likely to increase
+                    growth_decrease = np.random.binomial(1, 0.9)
 
-# For each HSM, we need to determine what the outcome would be
-#  1 = "Response" and 0 = "Ignored"
+                # We'll randomly generate the growth or deacrease rate
+                # The rate will come from a broad Beta distribution
+                rate = np.random.beta(2, 2)
 
-# We'll model this in two ways, the simple and the complex
-# In the simple method, we'll assign a distribution to each HSM
-# and draw samples for it to determine if the message was replied
-# In the complex method we'll take into account the time and day
-# simulating time-of-day effects (saying "Good evening" in the morning)
-# and day-of-week effects (templated getting old)
+                # Calculate the number of new messages as a function of the previous
+                new_messages = int(customer_messages[-1] * (growth_decrease + rate))
 
-# We start by assigning random conversion rates to each HSM
-conv_rates = np.random.beta(3, 70, size=3)
+            # Store the new messages for the customer
+            customer_messages.append(new_messages)
 
-# Now we can generate the result for each HSM
-results = [
-    np.random.choice([0, 1], p=[1 - p, p], size=in_messages_n) for p in conv_rates
-]
+    # Store the customer's message history
+    messages[customer] = customer_messages
+
 
 # Put it all together in a Pandas DF
-df = pd.DataFrame([ids, ts, ts_day, hour_of_day, minute_of_day, day_of_week]).T
-df.columns = ["id", "ts", "ts_day", "hour_of_day", "minute_of_day", "day_of_week"]
-df["id"] = df["id"].astype(int)
+df = pd.DataFrame(messages)
+df["day"] = days.astype(int)
 
-# Load the result for each HSM
-for idx, hsm in enumerate(hsms):
-    df[f"{hsm}_result"] = results[idx]
+# Black magic to change the order of the columns, because OCD
+cols = df.columns.tolist()
+cols = cols[-1:] + cols[:-1]
+df = df[cols]
 
 # Export data as CSV
 df.to_csv("whatsapp_messages.csv", index=False)
